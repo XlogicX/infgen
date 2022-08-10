@@ -526,6 +526,7 @@ struct state {
     int tree;                   // true to output dynamic tree
     int draw;                   // true to output dynamic descriptor
     int stats;                  // true to output statistics
+    int table;                  // true to output Huffman Table
     int col;                    // state within data line
     unsigned max;               // maximum distance (bytes so far)
     unsigned win;               // window size from zlib header or 32K
@@ -606,6 +607,16 @@ local inline void putbits(struct state *s) {
     // End the comment and the line.
     putc('\n', s->out);
     s->col = 0;
+}
+
+/*
+ * Print out a binary representation of the provided (value) at
+ * a specific length of (digits).
+ */
+local void print_bin(unsigned long value, int digits)
+{
+    for (int i = digits; i >= 0; i--)
+        fprintf(stdout,"%lu", (value & (1 << i)) >> i );
 }
 
 // Write token at the start of a line and val as a character or decimal value,
@@ -773,6 +784,77 @@ struct huffman {
     short *count;       // number of symbols of each length
     short *symbol;      // canonically ordered symbols
 };
+
+/*
+ * Prints out the huffman table by reproducing code in 3.2.2 of RFC 1951
+ * To the best of my ability.
+ */
+local void table(int entries, short *length, int nlen) {
+    /* Build Alphabet and bitlengths. Also get max size of bl_count array*/
+    /* AKA: Step 1 of RFC 1951 3.2.2 */
+    int alphabet[entries];
+    int bitlengths[entries];
+    int bl_count_size = 0;
+    for (int i = 0, j=0; i < nlen; i++) {
+        if (length[i] != 0) {
+            alphabet[j] = i;
+            bitlengths[j] = length[i];
+            if (length[i] > bl_count_size) {
+                bl_count_size = length[i];
+            }
+            j++;
+        }
+    }
+
+    bl_count_size++; //largest bit size
+    int bl_count[bl_count_size]; //init array
+    for (int i=0; i < bl_count_size; i++) {
+        bl_count[i] = 0;
+    }
+    // Tally them
+    for (int i=0; i < entries; i++) {
+        bl_count[bitlengths[i]]++;
+    }
+
+    /* Step 2 of RFC 1951 3.2.2 */
+    int code = 0;
+    bl_count[0] = 0;
+    int next_code[bl_count_size]; //init array
+    for (int i=0; i < bl_count_size; i++) {
+        next_code[i] = 0;
+    }
+    for (int i=1; i < bl_count_size; i++) {
+        code = (code + bl_count[i-1]) << 1;
+        next_code[i] = code;
+    }
+
+    /* Step 3 of RFC 1951 3.2.2 */
+    int tree[entries];
+    int len;
+    for (int i=0; i < entries; i++) {
+        tree[i] = 0;
+    }
+    for (int n=0; n < entries; n++) {
+        len = bitlengths[n];
+        if (len !=0) {
+            tree[n] = next_code[len];
+            next_code[len] += 1;
+        }
+    }
+
+    fprintf(stdout,"\nSymbol\tAlpha\tCode\n");
+    for (int i = 0; i < entries; i++) {
+        if (alphabet[i] > 31 && alphabet[i] < 128) {
+            fprintf(stdout,"%d\t%c\t",alphabet[i],alphabet[i]);
+        }
+        else {
+            fprintf(stdout,"%d\t\t",alphabet[i]);
+        }
+        print_bin(tree[i],bitlengths[i]-1);
+        fprintf(stdout,"\n");
+    }
+}
+
 
 // Decode a code from the stream s using huffman table h. Return the symbol or
 // a negative value if there is an error. If all of the lengths are zero, i.e.
@@ -1041,7 +1123,7 @@ local int fixed(struct state *s) {
             lengths[symbol] = 7;
         for (; symbol < FIXLCODES; symbol++)
             lengths[symbol] = 8;
-        construct(&lencode, lengths, FIXLCODES);
+        construct(&lencode, lengths, FIXLCODES);      
 
         // Distance table.
         for (symbol = 0; symbol < MAXDCODES; symbol++)
@@ -1058,6 +1140,10 @@ local int fixed(struct state *s) {
 
 // Process a dynamic codes block.
 local int dynamic(struct state *s) {
+    int l_entries = 0;
+    int d_entries = 0;
+    int c_entries = 0;
+
     // Get number of lengths in each table, check lengths.
     if (s->data && s->col) {
         putc('\n', s->out);
@@ -1096,10 +1182,22 @@ local int dynamic(struct state *s) {
     for (; index < 19; index++)
         lengths[order[index]] = 0;
 
+    if (s->table) {
+        for (index = 0; index < 19; index++) {
+            if (lengths[index] != 0) {
+                c_entries++;
+            }
+         }
+    }
+
     // Build huffman table for code lengths codes (use lencode temporarily).
     short lencnt[MAXBITS+1], lensym[MAXLCODES];         // lencode memory
     struct huffman lencode = {lencnt, lensym};          // length code
     int err = construct(&lencode, lengths, 19);
+    if (s->table) {
+        fprintf(s->out, "Code Length Codes Table:");
+        table(c_entries, lengths, 19);
+    }
     if (err < 0)
         return IG_CODE_LENGTHS_CODE_OVER_ERR;   // oversubscribed
     else if (err > 0)
@@ -1162,13 +1260,17 @@ local int dynamic(struct state *s) {
     // Write literal/length and distance code lengths.
     if (s->tree) {
         for (index = 0; index < nlen; index++)
-            if (lengths[index] != 0)
+            if (lengths[index] != 0) {
                 fprintf(s->out, "%slitlen %d %d\n", s->draw ? "! " : "",
                         index, lengths[index]);
+                l_entries++;
+            }
         for (; index < nlen + ndist; index++)
-            if (lengths[index] != 0)
+            if (lengths[index] != 0) {
                 fprintf(s->out, "%sdist %d %d\n", s->draw ? "! " : "",
                         index - nlen, lengths[index]);
+                d_entries++;
+            }
     }
 
     // Check for end-of-block code -- there better be one!
@@ -1177,6 +1279,11 @@ local int dynamic(struct state *s) {
 
     // Build huffman table for literal/length codes.
     err = construct(&lencode, lengths, nlen);
+    if (s->table) {
+        fprintf(s->out, "Literal/Length Table:");
+        table(l_entries, lengths, nlen);
+    
+    }
     if (err < 0)
         return IG_LITLEN_CODE_OVER_ERR;
     else if (err > 0 && nlen - lencode.count[0] != 1)
@@ -1186,6 +1293,10 @@ local int dynamic(struct state *s) {
     short distcnt[MAXBITS+1], distsym[MAXDCODES];       // distcode memory
     struct huffman distcode = {distcnt, distsym};       // distance code
     err = construct(&distcode, lengths + nlen, ndist);
+    if (s->table) {
+        fprintf(s->out, "Distance Table:");
+        table(d_entries, lengths + nlen, ndist);
+    }
     if (err < 0)
         return IG_DIST_CODE_OVER_ERR;
     else if (err > 0 && ndist - distcode.count[0] != 1)
@@ -1349,6 +1460,7 @@ local void help(void) {
           "\n"
           "    -d   Write raw dynamic header (code lengths in comments)\n"
           "    -dd  Also show the bits for each element displayed\n"
+          "    -t   Table view (print internal huffman tables\n"
           "    -q   Do not write dynamic code lengths (comments or not)\n"
           "    -qq  Do not write deflate stream description at all\n"
           "    -i   Include detailed gzip / zlib header descriptions\n"
@@ -1377,6 +1489,7 @@ int main(int argc, char **argv) {
     s.tree = 1;
     s.draw = 0;
     s.stats = 0;
+    s.table = 0;
     s.win = MAXDIST;
     while (--argc) {
         char *arg = *++argv;
@@ -1398,6 +1511,7 @@ int main(int argc, char **argv) {
                 break;
             case 'd':  s.draw++;        break;
             case 's':  s.stats = 1;     break;
+            case 't':  s.table = 1;     break;
             case 'r':  head = 0;        break;
             case 'h':  help();          return 0;
             default:
