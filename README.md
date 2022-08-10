@@ -1,24 +1,27 @@
-Synopsis
+# Fork Notes
+My motivation for forking this was in wanting a far more verbose version of infgen. I wanted to understand what each bit in the bitstream reperesented (with color coding). An initialy mistake of mine was in adding this functionality to an old copy I had of infgen (2.4), when Adler literally added the bit functionality in a more recent version. Adlers 3.0 version now has a license where I can fork & modify, but I will need to reprogram and re-add the features that I had for this new version
+
+Features (added back in so far)
 --------
+-t table: When in dynamic huffman mode, actually print the huffman tables
+
+# Synopsis
 
 _infgen_ is a deflate stream disassembler. It will read a gzip, zlib, or raw
 deflate stream, and output a readable description of the contents.
 
-Motivation
-----------
+# Motivation
 
 _infgen_ permits the examination of deflate compressed data for instructional
 purposes, to see how the data is compressed, and for debugging deflate
 compressors.
 
-Installation
-------------
+# Installation
 
 Simply compile `infgen.c`, and provide the compressed data to stdin. The
 disassembled output will be written to stdout.
 
-Test
-----
+## Test
 
     gzip < infgen.c | ./infgen
 
@@ -30,7 +33,6 @@ Use:
 
 to see the command options.
 
-License
--------
+# License
 
 This code is under the zlib license, found in the source file and LICENSE.
