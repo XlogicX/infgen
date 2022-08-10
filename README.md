@@ -3,7 +3,7 @@ My motivation for forking this was in wanting a far more verbose version of infg
 
 Features (added back in so far)
 --------
--t table: When in dynamic huffman mode, actually print the huffman tables
+-t table: When in dynamic huffman mode, actually print the huffman tables. Look at oversubscribed.png for a good visualization on what a 'huffman table' looks like when you only give each symbol one bit, of course you get an error.
 
 # Synopsis
 
