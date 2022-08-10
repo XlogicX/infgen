@@ -537,6 +537,7 @@ local void updatecolor(int color){
     switch (color) {
     case 0: fprintf(stdout,"%s",PURPLE); break;
     case 1: fprintf(stdout,"%s",CYAN); break;
+    case 11: fprintf(stdout,"%s",CYAN); break;    
     case 2: fprintf(stdout,"%s",RED); break;
     case 12: fprintf(stdout,"%s",REDB); break;
     case 3: fprintf(stdout,"%s",GRN); break;
@@ -1438,7 +1439,7 @@ local int infgen(struct state *s) {
     s->matchnum = 0;
     s->matchtot = 0;
     s->littot = 0;
-    s->colortoggle = 0;
+    s->colortoggle = 1;
 
     // Return if bits() or decode() tries to read past available input.
     int err = 0;
