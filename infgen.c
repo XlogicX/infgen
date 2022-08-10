@@ -594,6 +594,12 @@ struct state {
 
     // Input limit error return state for bits() and decode().
     jmp_buf env;
+
+    unsigned char *fullbuffer;  /* A copy of the whole input */
+    int fullbuffersize;         /* To keep track for malloc */
+    /* Collection of bit patterns*/
+    unsigned char *bitpatterns; /* Used as two-dim int array [[d,d],[d,d],...]*/
+    int bitpatternsize;         /* total bytes needed for patterns (for malloc) */    
 };
 
 #define LINELEN 79      // target line length for data and literal commands
@@ -635,8 +641,7 @@ local inline void putbits(struct state *s, int color) {
                 do {
                     fputc('0' + ((seq >> --len) & 1), s->out);
                 } while (len);
-                if (s->color) 
-                  updatecolor(9);
+                if (s->color) updatecolor(9);
             }
         }
     }
@@ -654,6 +659,29 @@ local void print_bin(unsigned long value, int digits)
 {
     for (int i = digits; i >= 0; i--)
         fprintf(stdout,"%lu", (value & (1 << i)) >> i );
+}
+
+/*
+ * Appending value to the bitpatterns two-dim array
+ * This array is a length (of bits), color pair
+ * This routine handles the increasing of memory with realloc
+ */
+local void updatebits(struct state *s,char length,char color){
+    s->bitpatternsize += 2;
+    s->bitpatterns = (unsigned char *) realloc(s->bitpatterns, s->bitpatternsize);
+    s->bitpatterns[s->bitpatternsize-2] = length;    // 3 bits
+    s->bitpatterns[s->bitpatternsize-1] = color;    // Color Code 3
+}
+
+/*
+ * Building back up our stdin input as the program takes it away
+ * with getc(). We will need this buffer later for re-processing if
+ * in 'color' mode.
+ */
+local void updatebuffer(struct state *s,char value){
+    s->fullbuffersize += 1;     // add a byte to the memory buffer size
+    s->fullbuffer = (unsigned char *) realloc(s->fullbuffer, s->fullbuffersize); // Expand memory by that ammount
+    s->fullbuffer[s->fullbuffersize-1] = value;
 }
 
 // Write token at the start of a line and val as a character or decimal value,
@@ -706,6 +734,7 @@ local inline int bits(struct state *s, int need) {
     long val = s->bitbuf;
     while (s->bitcnt < need) {
         int next = getc(s->in);
+        if (s->color) updatebuffer(s,next);    
         if (next == EOF)
             longjmp(s->env, 1);                 // out of input
         val |= (long)(next) << s->bitcnt;       // load eight bits
@@ -754,9 +783,28 @@ local int stored(struct state *s) {
 
     // Get length and check against its one's complement.
     unsigned len = getc(s->in);
-    len += (unsigned)(getc(s->in)) << 8;
+    if (s->color) {
+        updatebuffer(s,len);
+        updatebits(s,5,9);
+        updatebits(s,8,2);
+    }
+    int extralen;
+    extralen = (unsigned)(getc(s->in)) << 8;  /* Used to be compounded instruction, but needed those bits*/
+    if (s->color) {
+        updatebits(s,8,2);    
+        updatebuffer(s,extralen); 
+    } 
+    len += extralen;    
     unsigned cmp = getc(s->in);
+    if (s->color) {
+        updatebits(s,8,12);     
+        updatebuffer(s,cmp);
+    }
     int octet = getc(s->in);
+    if (s->color) {
+        updatebits(s,8,12);    
+        updatebuffer(s,octet);   
+    }
     if (octet == EOF)
         return IG_INCOMPLETE;                   // not enough input
     cmp += (unsigned)octet << 8;
@@ -782,6 +830,10 @@ local int stored(struct state *s) {
     // Copy len bytes from in to out.
     while (len--) {
         octet = getc(s->in);
+        if (s->color) {    
+            updatebits(s,8,5);          
+            updatebuffer(s,octet);
+        }
         s->blockin += 8;
         if (octet == EOF)
             return IG_INCOMPLETE;               // not enough input
@@ -897,7 +949,7 @@ local void table(int entries, short *length, int nlen) {
 // a negative value if there is an error. If all of the lengths are zero, i.e.
 // an empty code, or if the code is incomplete and an invalid code is received,
 // then IG_BAD_CODE_ERR is returned after reading MAXBITS bits.
-local inline int decode(struct state *s, struct huffman *h) {
+local inline int decode(struct state *s, struct huffman *h, int color) {
     int bitbuf = s->bitbuf;     // bits to decode from the input
     int left = s->bitcnt;       // number of bits in bitbuf
     int len = 1;                // length of code in consideration
@@ -927,6 +979,9 @@ local inline int decode(struct state *s, struct huffman *h) {
                 s->bitcnt = (s->bitcnt - len) & 7;
                 s->blockin += len;
 
+                // Update bit pattern
+                if (s->color) updatebits(s,len,color);
+
                 // Return symbol.
                 return h->symbol[index + (code - first)];
             }
@@ -944,6 +999,7 @@ local inline int decode(struct state *s, struct huffman *h) {
         if (left == 0)
             break;
         bitbuf = getc(s->in);
+        if (s->color) updatebuffer(s,bitbuf);
         if (bitbuf == EOF)
             longjmp(s->env, 1);         // out of input
         if (left > 8)
@@ -1029,9 +1085,20 @@ local int codes(struct state *s,
 
     // Decode literals and length/distance pairs.
     int symbol;
+    /* decode literals and length/distance pairs */
+    int color = 5;
+    int color2 = 6;
+    int toggle1 = 0;
+    int toggle2 = 0;
     do {
+        if (s->color) {        
+            if (toggle1 == 0) { color = 5; toggle1 = 1;} 
+            else { color = 15; toggle1 = 0;}
+            if (toggle2 == 0) { color2 = 6; toggle2 = 1;} 
+            else { color2 = 16; toggle2 = 0;}   
+        } 
         uintmax_t beg = s->blockin;
-        symbol = decode(s, lencode);
+        symbol = decode(s, lencode, color);
         s->symbols++;
         if (symbol < 0)
             return symbol;              // invalid symbol
@@ -1060,7 +1127,7 @@ local int codes(struct state *s,
             int len = lens[symbol] + bits(s, lext[symbol]);
 
             // Get distance.
-            symbol = decode(s, distcode);
+            symbol = decode(s, distcode, color2);
             if (symbol < 0)
                 return symbol;                  // invalid symbol
             unsigned dist = dists[symbol] + bits(s, dext[symbol]);
@@ -1111,7 +1178,7 @@ local int codes(struct state *s,
         }
         fputs("end", s->out);
         s->col = 3;
-        putbits(s,9);
+        putbits(s,5);
     }
     if (s->stats) {
         if (s->symbols != s->matches)
@@ -1180,12 +1247,21 @@ local int dynamic(struct state *s) {
     int l_entries = 0;
     int d_entries = 0;
     int c_entries = 0;
+    int color = 0;
+    int toggle = 0;
 
     // Get number of lengths in each table, check lengths.
     if (s->data && s->col) {
         putc('\n', s->out);
         s->col = 0;
     }
+
+    if (s->color) {
+        updatebits(s,5,2);
+        updatebits(s,5,12);
+        updatebits(s,4,2); 
+    } 
+
     int nlen = bits(s, 5) + 257;
     int ndist = bits(s, 5) + 1;
     int ncode = bits(s, 4) + 4;
@@ -1207,7 +1283,13 @@ local int dynamic(struct state *s) {
         {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
     int index;
     for (index = 0; index < ncode; index++) {
+        if (s->color) { 
+            updatebits(s,3,3);
+            if (toggle == 0) { color = 3; toggle = 1;} 
+            else { color = 13; toggle = 0;}
+        }
         int len = bits(s, 3);
+        if (s->color) updatebits(s,3,color);
         lengths[order[index]] = len;
         if (s->binary)
             putc(len + 1, s->out);
@@ -1242,8 +1324,11 @@ local int dynamic(struct state *s) {
 
     // Read length/literal and distance code length tables.
     index = 0;
+    toggle = 0;
     while (index < nlen + ndist) {
-        int symbol = decode(s, &lencode);
+        if (toggle == 0) { color = 4; toggle = 1;} 
+        else { color = 14; toggle = 0;}
+        int symbol = decode(s, &lencode,color);
         if (symbol < 0)
             return symbol;              // invalid symbol
         if (symbol < 16) {              // length in 0..15
@@ -1259,12 +1344,18 @@ local int dynamic(struct state *s) {
                 if (index == 0)
                     return IG_REPEAT_NO_FIRST_ERR;  // no last length!
                 len = lengths[index - 1];           // last length
+                if (s->color) updatebits(s,2,4);
                 symbol = 3 + bits(s, 2);
             }
-            else if (symbol == 17)      // repeat zero 3..10 times
+            else if (symbol == 17) {     // repeat zero 3..10 times
+                if (s->color) updatebits(s,3,4);  
                 symbol = 3 + bits(s, 3);
-            else                        // == 18, repeat zero 11..138 times
+            }
+            else {                       // == 18, repeat zero 11..138 times
+                if (s->color) updatebits(s,7,4);
                 symbol = 11 + bits(s, 7);
+            }
+
             if (index + symbol > nlen + ndist)
                 return IG_REPEAT_TOO_MANY_ERR;  // too many lengths!
             if (s->binary)
@@ -1368,6 +1459,12 @@ local int infgen(struct state *s) {
     s->matchnum = 0;
     s->matchtot = 0;
     s->littot = 0;
+
+    /* Colors for 'Last Block' and Compression Type */
+    if (s->color) {
+        updatebits(s,1,0);
+        updatebits(s,2,1); 
+    } 
 
     // Return if bits() or decode() tries to read past available input.
     int err = 0;
@@ -1485,6 +1582,53 @@ local int infgen(struct state *s) {
     return err;
 }
 
+local void colorbits(struct state *s) {
+    fprintf(stdout,"Color Coded Bitstream:\n");
+    int total_bits = 0;
+    for (int i=0; i<s->bitpatternsize; i += 2) {
+        total_bits += s->bitpatterns[i];
+    }
+    int extra = 8-(total_bits%8);  // Modulo calculation to add extra bits (adding the stop/pad)
+
+    /* Build the Array of Color Patterns */
+    int colorpattern[total_bits+extra]; //init array
+    int colorpattern_rev[total_bits+extra]; //init array (reversed bitstream byte by byte)
+    int bitdex = 0;
+    int bold = 10;
+    int lastcolor = 0;
+    for (int i=0; i<s->bitpatternsize; i += 2) {             // For each length-color pair
+        for (int j=0; j<s->bitpatterns[i];j++,bitdex++){         // increment through each color bit
+            colorpattern[bitdex] = s->bitpatterns[i+1]; //+bold;              // And set it
+        }
+    }
+    free(s->bitpatterns);  // We no longer need the bitpatterns in memory
+    /* Also don't forget to add the last unparsed pad bits*/
+    for (int j=0; j<extra; j++,bitdex++){ colorpattern[bitdex] = 9;}
+
+    /* Now we need to reverse the bit stream per byte */
+    for (int i=0; i<total_bits + extra; i+=8) {
+        for (int j=0; j<8; j++) {
+            colorpattern_rev[i+j] = colorpattern[i+(7-j)];
+        }                                     
+    }  
+
+    // Print the bits of the intput
+    unsigned char buffbyte;
+    unsigned char mask;
+    for (int i=0; i<s->fullbuffersize; i++) {            // For each byte
+        buffbyte = s->fullbuffer[i];
+        // Print each bit
+        mask = 0x80;
+        for (int j=0; j<8; j++) {
+            updatecolor(colorpattern_rev[(i*8)+j]);
+            fprintf(stdout,"%d%s",(buffbyte&(mask>>j))>>(7-j),STD);
+        }
+        fprintf(stdout, " ");
+    }
+    fprintf(stdout,"\n");
+    free(s->fullbuffer);
+}
+
 // Provide help for the command options.
 local void help(void) {
     fputs(
@@ -1522,6 +1666,15 @@ int main(int argc, char **argv) {
     int head = 1;
     int wrap = 1;
     struct state s;
+
+    if (s.color) {
+        /* Initialize memory for bitpatterns */
+        s.bitpatterns = (unsigned char *) malloc(2);
+        s.bitpatternsize = 0;
+        s.fullbuffer = (unsigned char *) malloc(2);
+        s.fullbuffersize = 0;
+    }
+
     s.binary = 0;
     s.data = 1;
     s.tree = 1;
@@ -1809,6 +1962,9 @@ int main(int argc, char **argv) {
                 fputs("!\ncrc\nlength\n", s.out);
         }
     } while (ret == 0);
+
+    /* Generate the rainbow of bits if -c */
+    if (s.color) colorbits(&s);
 
     // Done.
     fclose(s.out);
