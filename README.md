@@ -1,5 +1,5 @@
 # Fork Notes
-My motivation for forking this was in wanting a far more verbose version of infgen. I wanted to understand what each bit in the bitstream reperesented (with color coding). An initialy mistake of mine was in adding this functionality to an old copy I had of infgen (2.4), when Adler literally added the bit functionality in a more recent version. Adlers 3.0 version now has a license where I can fork & modify, but I will need to reprogram and re-add the features that I had for this new version
+My motivation for forking this was in wanting a far more verbose version of infgen. I wanted to understand what each bit in the bitstream reperesented (with color coding). An initial mistake of mine was in adding this functionality to an old copy I had of infgen (2.4), when Adler literally added the bit functionality in a more recent version. Adlers 3.0 version now has a license where I can fork & modify, but I will need to reprogram and re-add the features that I had for this new version
 
 Features (added back in so far)
 --------
