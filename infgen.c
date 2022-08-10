@@ -518,6 +518,39 @@ local inline void warn(char *fmt, ...) {
 #define MAXDIST 32768           // maximum match distance
 #define MAXSEQS 20              // maximum number of bit groups to save
 
+/* Define Colors */
+#define PURPLE "\033[0;35m"     /* Last Block */
+#define CYAN "\033[0;36m"       /* Compression Type */
+#define RED "\033[0;31m"        /* Count / LEN/NLEN */
+#define REDB "\033[1;31m"       /* Count / LEN/NLEN */
+#define GRN "\033[0;32m"        /* Code */
+#define GRNB "\033[1;32m"       /* Code */
+#define YL "\033[0;33m"         /* Code Lengths */
+#define YLB "\033[1;33m"        /* Code Lengths */
+#define BLUE "\033[0;34m"       /* Compressed/Stored Data */
+#define BLUEB "\033[1;34m"      /* Compressed/Stored Data */
+#define WHITE "\033[0;37m"      /* Distance or Default */
+#define WHITEB "\033[1;37m"     /* Distance or Default */
+#define STD "\033[0m"
+
+local void updatecolor(int color){
+    switch (color) {
+    case 0: fprintf(stdout,"%s",PURPLE); break;
+    case 1: fprintf(stdout,"%s",CYAN); break;
+    case 2: fprintf(stdout,"%s",RED); break;
+    case 12: fprintf(stdout,"%s",REDB); break;
+    case 3: fprintf(stdout,"%s",GRN); break;
+    case 13: fprintf(stdout,"%s",GRNB); break;
+    case 4: fprintf(stdout,"%s",YL); break;
+    case 14: fprintf(stdout,"%s",YLB); break;
+    case 5: fprintf(stdout,"%s",BLUE); break;
+    case 15: fprintf(stdout,"%s",BLUEB); break;
+    case 6: fprintf(stdout,"%s",WHITEB); break;
+    case 16: fprintf(stdout,"%s",WHITE); break;
+    default: fprintf(stdout,"%s",STD);
+    }
+}
+
 // infgen() input and output state.
 struct state {
     // Output state.
@@ -527,6 +560,7 @@ struct state {
     int draw;                   // true to output dynamic descriptor
     int stats;                  // true to output statistics
     int table;                  // true to output Huffman Table
+    int color;
     int col;                    // state within data line
     unsigned max;               // maximum distance (bytes so far)
     unsigned win;               // window size from zlib header or 32K
@@ -582,7 +616,7 @@ local void seqtab(struct state *s) {
 
 // Write the bits that composed the last item, as a comment starting in column
 // SEQCOL. This assumes that tab stops are at multiples of eight.
-local inline void putbits(struct state *s) {
+local inline void putbits(struct state *s, int color) {
     if (s->draw > 1) {
         // Start a comment at column SEQCOL.
         seqtab(s);
@@ -597,9 +631,12 @@ local inline void putbits(struct state *s) {
             int len = s->len[s->seqs];
             if (len) {
                 putc(' ', s->out);
+                if (s->color) updatecolor(color);
                 do {
                     fputc('0' + ((seq >> --len) & 1), s->out);
                 } while (len);
+                if (s->color) 
+                  updatecolor(9);
             }
         }
     }
@@ -623,7 +660,7 @@ local void print_bin(unsigned long value, int digits)
 // continuing the line. Keep the line length reasonable and using string
 // literals whenever possible. If seq is true and s->draw > 1, also display the
 // sequences of bits that led to this value.
-local inline void putval(int val, char *token, int seq, struct state *s) {
+local inline void putval(int val, char *token, int seq, struct state *s, int color) {
     seq = seq && s->draw > 1;
 
     // New line if too long or decimal after string.
@@ -652,7 +689,7 @@ local inline void putval(int val, char *token, int seq, struct state *s) {
 
     // Append a comment with the sequences of bits, if requested.
     if (seq)
-        putbits(s);
+        putbits(s,color);
 }
 
 // Return need bits from the input stream. This always leaves less than
@@ -712,7 +749,7 @@ local int stored(struct state *s) {
     (void)bits(s, s->bitcnt);
     if (s->draw > 1) {
         s->col = 0;
-        putbits(s);
+        putbits(s,9);
     }
 
     // Get length and check against its one's complement.
@@ -757,7 +794,7 @@ local int stored(struct state *s) {
             }
         }
         if (s->data)
-            putval(octet, "data", 0, s);
+            putval(octet, "data", 0, s, 9);
         s->blockout++;
         s->symbols++;
     }
@@ -1009,7 +1046,7 @@ local int codes(struct state *s,
                 }
             }
             if (s->data)
-                putval(symbol, "literal", 1, s);
+                putval(symbol, "literal", 1, s, 5);
             s->blockout += 1;
             if (s->max < s->win)
                 s->max++;
@@ -1040,7 +1077,7 @@ local int codes(struct state *s,
                     s->col = 0;
                 }
                 s->col = fprintf(s->out, "match %d %u", len, dist);
-                putbits(s);
+                putbits(s,6);
             }
             if (dist > s->max) {
                 warn("distance too far back (%u/%u)", dist, s->max);
@@ -1074,7 +1111,7 @@ local int codes(struct state *s,
         }
         fputs("end", s->out);
         s->col = 3;
-        putbits(s);
+        putbits(s,9);
     }
     if (s->stats) {
         if (s->symbols != s->matches)
@@ -1161,7 +1198,7 @@ local int dynamic(struct state *s) {
     }
     if (s->draw) {
         s->col = fprintf(s->out, "count %d %d %d", nlen, ndist, ncode);
-        putbits(s);
+        putbits(s,2);
     }
 
     // Read code length code lengths (really), missing lengths are zero.
@@ -1176,7 +1213,7 @@ local int dynamic(struct state *s) {
             putc(len + 1, s->out);
         if (s->draw && len) {
             s->col = fprintf(s->out, "code %d %d", order[index], len);
-            putbits(s);
+            putbits(s,3);
         }
     }
     for (; index < 19; index++)
@@ -1213,7 +1250,7 @@ local int dynamic(struct state *s) {
             if (s->binary)
                 putc(symbol + 1, s->out);
             if (s->draw)
-                putval(symbol, "lens", 1, s);
+                putval(symbol, "lens", 1, s, 4);
             lengths[index++] = symbol;
         }
         else {                          // repeat instruction
@@ -1239,7 +1276,7 @@ local int dynamic(struct state *s) {
                 }
                 s->col = fprintf(s->out, "%s %d",
                                  len == -1 ? "zeros" : "repeat", symbol);
-                putbits(s);
+                putbits(s,4);
             }
             if (len == -1)
                 len = 0;
@@ -1353,7 +1390,7 @@ local int infgen(struct state *s) {
             if (s->data && last) {
                 fputs("last", s->out);
                 s->col = 4;
-                putbits(s);
+                putbits(s,0);
             }
             int type = bits(s, 2);      // block type 0..3
             if (s->binary) {
@@ -1369,7 +1406,7 @@ local int infgen(struct state *s) {
                     s->col = 6;
                     if (s->bitbuf)
                         s->col += fprintf(s->out, " %d", s->bitbuf);
-                    putbits(s);
+                    putbits(s,1);
                 }
                 err = stored(s);
                 break;
@@ -1377,7 +1414,7 @@ local int infgen(struct state *s) {
                 if (s->data) {
                     fputs("fixed", s->out);
                     s->col = 5;
-                    putbits(s);
+                    putbits(s,1);
                 }
                 err = fixed(s);
                 break;
@@ -1385,7 +1422,7 @@ local int infgen(struct state *s) {
                 if (s->data) {
                     fputs("dynamic", s->out);
                     s->col = 7;
-                    putbits(s);
+                    putbits(s,1);
                 }
                 err = dynamic(s);
                 break;
@@ -1393,7 +1430,7 @@ local int infgen(struct state *s) {
                 if (s->data) {
                     fputs("block3", s->out);
                     s->col = 6;
-                    putbits(s);
+                    putbits(s,1);
                 }
                 err = IG_BLOCK_TYPE_ERR;
             }
@@ -1419,7 +1456,7 @@ local int infgen(struct state *s) {
         s->seq[s->seqs] = s->bitbuf;
         s->len[s->seqs] = s->bitcnt;
         s->seqs++;
-        putbits(s);
+        putbits(s,9);
     }
     else if (s->data && s->bitcnt && s->bitbuf)
         putc('\n', s->out);
@@ -1461,6 +1498,7 @@ local void help(void) {
           "    -d   Write raw dynamic header (code lengths in comments)\n"
           "    -dd  Also show the bits for each element displayed\n"
           "    -t   Table view (print internal huffman tables\n"
+          "    -c   Print the bits in color (if also -dd)\n"
           "    -q   Do not write dynamic code lengths (comments or not)\n"
           "    -qq  Do not write deflate stream description at all\n"
           "    -i   Include detailed gzip / zlib header descriptions\n"
@@ -1490,6 +1528,7 @@ int main(int argc, char **argv) {
     s.draw = 0;
     s.stats = 0;
     s.table = 0;
+    s.color = 0;
     s.win = MAXDIST;
     while (--argc) {
         char *arg = *++argv;
@@ -1512,6 +1551,10 @@ int main(int argc, char **argv) {
             case 'd':  s.draw++;        break;
             case 's':  s.stats = 1;     break;
             case 't':  s.table = 1;     break;
+            case 'c':
+               if (s.draw == 2)
+                  s.color = 1;
+               break;
             case 'r':  head = 0;        break;
             case 'h':  help();          return 0;
             default:
@@ -1609,7 +1652,7 @@ int main(int argc, char **argv) {
                     do {
                         NEXT(s.in);
                         if (info) {
-                            putval(n, "extra", 0, &s);
+                            putval(n, "extra", 0, &s, 9);
                             if (ok) {
                                 if (sub < 2)
                                     // sub-field ID byte
@@ -1674,7 +1717,7 @@ int main(int argc, char **argv) {
                 else
                     do {
                         if (info)
-                            putval(n, "name", 0, &s);
+                            putval(n, "name", 0, &s, 9);
                     } while (NEXT(s.in) != 0);
                 if (info && s.col) {
                     putc('\n', s.out);
@@ -1689,7 +1732,7 @@ int main(int argc, char **argv) {
                 else
                     do {
                         if (info)
-                            putval(n, "comment", 0, &s);
+                            putval(n, "comment", 0, &s, 9);
                     } while (NEXT(s.in) != 0);
                 if (info && s.col) {
                     putc('\n', s.out);
