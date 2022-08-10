@@ -798,7 +798,6 @@ local int stored(struct state *s) {
     unsigned len = getc(s->in);
     if (s->color) {
         updatebuffer(s,len);
-        updatebits(s,5,9);
         updatebits(s,8,2);
     }
     int extralen;
@@ -807,7 +806,9 @@ local int stored(struct state *s) {
         updatebits(s,8,2);    
         updatebuffer(s,extralen); 
     } 
-    len += extralen;    
+    len += extralen;
+    if (s->color) fprintf(s->out,"Length %s%d%s\n",RED,len,STD
+      );
     unsigned cmp = getc(s->in);
     if (s->color) {
         updatebits(s,8,12);     
