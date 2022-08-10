@@ -1,11 +1,14 @@
 # Fork Notes
-My motivation for forking this was in wanting a far more verbose version of infgen. I wanted to understand what each bit in the bitstream reperesented (with color coding). An initial mistake of mine was in adding this functionality to an old copy I had of infgen (2.4), when Adler literally added the bit functionality in a more recent version. Adlers 3.0 version now has a license where I can fork & modify, but I will need to reprogram and re-add the features that I had for this new version
+My motivation for forking this was in wanting a far more verbose version of infgen. I wanted to understand what each bit in the bitstream reperesented (with color coding). An initial mistake of mine was in adding this functionality to an old copy I had of infgen (2.4), when Adler literally added the bit functionality in a more recent version. Adlers 3.0 version now has a license where I can fork & modify. I added some color visualization to the bit patterns and also a huffman table dump (to better visualize where WHY some of these bit patterns are what they are).
 
 Features (added back in so far)
 --------
 -t table: When in dynamic huffman mode, actually print the huffman tables. Look at oversubscribed.png for a good visualization on what a 'huffman table' looks like when you only give each symbol one bit, of course you get an error.
+-c colors: Color coded bit patterns in output and in a final full bitstream
 
-![alt text](https://github.com/XlogicX/infgen/blob/master/infgen_ddt.png?raw=true)
+Example Run with -ddtc arguments
+--------
+![Sample Run with -ddtc arguments](https://github.com/XlogicX/infgen/blob/master/infgen_ddtc.png?raw=true)
 
 # Synopsis
 
